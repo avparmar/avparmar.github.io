@@ -20,3 +20,8 @@ h1 {
   font-weight: 700;
   font-size: 40px;
 }
+
+.jumbotron p {
+  font-style: italic;
+  margin-left: 20%;
+}
