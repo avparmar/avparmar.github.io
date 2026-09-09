@@ -396,7 +396,7 @@ function playHeartbeatSound() {
 
 function triggerHeartbeat() {
   try {
-    const audio = new Audio("cry.mp3");
+    const audio = new Audio("scream2.mp3");
     audio.volume = 1;
     const playPromise = audio.play();
     if (playPromise && typeof playPromise.catch === "function") {
