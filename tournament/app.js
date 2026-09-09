@@ -480,11 +480,9 @@ function renderSignupTab() {
     <div class="empty-note" style="margin-top:12px;">Just want to deal instead of play? Let me know directly and I'll pencil you in.</div>
     </div>`;
   html += renderHostBox("signup");
-  if (hostUnlocked) {
-    html += `<div class="btn-row" style="margin-top:14px;justify-content:center;">
-      <button class="btn secondary" id="heartbeat-btn">Raise heartbeat</button>
-    </div>`;
-  }
+  html += `<div class="btn-row" style="margin-top:14px;justify-content:center;">
+    <button class="btn secondary" id="heartbeat-btn">Raise heartbeat</button>
+  </div>`;
   html += `</div></div>`;
   return html;
 }
