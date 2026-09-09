@@ -310,6 +310,74 @@ async function resetTournament() {
   if (!confirm("Reset the live tournament (seating, blind clock, eliminations, chip tallies)? Sign-ups are kept.")) return;
   await setDoc(liveRef, DEFAULT_LIVE);
 }
+
+function playHeartbeatSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const now = ctx.currentTime;
+    const dur = 0.5;
+
+    // Coarse bit-crushing waveshaper — quantizing the signal into a handful
+    // of steps is what gives old console sound-chip cries their harsh,
+    // metallic, "crinkly" digital texture instead of a clean tone.
+    const crusher = ctx.createWaveShaper();
+    const levels = 8;
+    const curve = new Float32Array(1024);
+    for (let i = 0; i < 1024; i++) {
+      const x = (i / 1023) * 2 - 1;
+      curve[i] = Math.round(x * levels) / levels;
+    }
+    crusher.curve = curve;
+    crusher.oversample = "none";
+
+    const masterGain = ctx.createGain();
+    masterGain.gain.setValueAtTime(0.0001, now);
+    masterGain.gain.exponentialRampToValueAtTime(0.5, now + 0.015);
+    masterGain.gain.setValueAtTime(0.5, now + dur * 0.75);
+    masterGain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    crusher.connect(masterGain).connect(ctx.destination);
+
+    // A jagged, stepped pitch pattern rather than a smooth sweep — mimicking
+    // the coarse frequency tables old sound-chip cries stepped through —
+    // for a fast, erratic, chittering screech (bat-cry style).
+    const steps = [650, 2000, 750, 2200, 950, 2400, 1150, 2500, 1350, 2100, 1000, 1700];
+    const osc = ctx.createOscillator();
+    osc.type = "square";
+    steps.forEach((f, i) => osc.frequency.setValueAtTime(f, now + (i / steps.length) * dur));
+    osc.connect(crusher);
+    osc.start(now);
+    osc.stop(now + dur + 0.05);
+
+    // A second square voice a fifth above for extra buzzy, metallic thickness
+    const osc2 = ctx.createOscillator();
+    osc2.type = "square";
+    steps.forEach((f, i) => osc2.frequency.setValueAtTime(f * 1.5, now + (i / steps.length) * dur));
+    osc2.connect(crusher);
+    osc2.start(now);
+    osc2.stop(now + dur + 0.05);
+    osc2.onended = () => ctx.close();
+  } catch (e) {
+    // Web Audio unsupported or blocked — fail silently, the flash still runs.
+  }
+}
+
+function triggerHeartbeat() {
+  try {
+    const audio = new Audio("cry.mp3");
+    audio.volume = 1;
+    const playPromise = audio.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch(() => playHeartbeatSound());
+    }
+  } catch (e) {
+    playHeartbeatSound();
+  }
+  const overlay = document.createElement("div");
+  overlay.className = "heartbeat-flash";
+  overlay.textContent = "😱";
+  document.body.appendChild(overlay);
+  setTimeout(() => overlay.remove(), 1400);
+}
 async function saveChipTally(form) {
   const chipCounts = {};
   confirmedList().forEach((p) => {
@@ -412,6 +480,11 @@ function renderSignupTab() {
     <div class="empty-note" style="margin-top:12px;">Just want to deal instead of play? Let me know directly and I'll pencil you in.</div>
     </div>`;
   html += renderHostBox("signup");
+  if (hostUnlocked) {
+    html += `<div class="btn-row" style="margin-top:14px;justify-content:center;">
+      <button class="btn secondary" id="heartbeat-btn">Raise heartbeat</button>
+    </div>`;
+  }
   html += `</div></div>`;
   return html;
 }
@@ -783,6 +856,7 @@ function wireEvents() {
   const restartBtn = $("restart-btn"); if (restartBtn) restartBtn.addEventListener("click", restartLevel);
   const resetBtn = $("reset-btn"); if (resetBtn) resetBtn.addEventListener("click", resetTournament);
   const reshuffleBtn = $("reshuffle-btn"); if (reshuffleBtn) reshuffleBtn.addEventListener("click", generateSeating);
+  const heartbeatBtn = $("heartbeat-btn"); if (heartbeatBtn) heartbeatBtn.addEventListener("click", triggerHeartbeat);
 }
 
 setInterval(checkAutoAdvance, 1000);
