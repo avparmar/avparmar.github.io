@@ -75,6 +75,9 @@ input, select { font-family: var(--font-body); font-size: 15px; }
 .hero h1 { font-size: clamp(26px, 3.6vw, 38px); line-height: 1.02; color: #fff; }
 .hero .meta { margin-top: 9px; font-size: 14px; opacity: 0.95; display: flex; gap: 16px; flex-wrap: wrap; font-family: var(--font-body); text-transform: none; letter-spacing: 0; color: #fff; }
 .hero .meta span { display: inline-flex; align-items: center; gap: 6px; }
+.hero .meta span.meta-location { font-size: 1.14em; font-weight: 700; }
+.hero .meta a { color: inherit; text-decoration: underline; text-decoration-color: rgba(255,255,255,0.5); text-underline-offset: 2px; white-space: nowrap; }
+.hero .meta a:hover { text-decoration-color: #fff; }
 .seat-meter {
   background: rgba(0,0,0,0.32); border: 2px solid var(--gold); border-radius: 10px;
   padding: 10px 18px; text-align: center; min-width: 120px; color: #fff;
@@ -107,14 +110,19 @@ input, select { font-family: var(--font-body); font-size: 15px; }
   background: var(--surface); border: 2px solid var(--gold); border-radius: var(--radius);
   box-shadow: var(--shadow); padding: 18px 20px; text-align: center;
   display: flex; flex-direction: column; justify-content: center;
+  container-type: inline-size;
 }
 .cb-eyebrow { text-transform: uppercase; letter-spacing: 0.16em; font-size: 12px; font-weight: 700; color: var(--gold); margin-bottom: 10px; }
-.cb-grid { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; }
-.cb-seg { display: flex; flex-direction: column; align-items: center; min-width: 62px; }
-.cb-num { font-family: var(--font-mono); font-size: clamp(34px, 7vw, 56px); font-weight: 600; line-height: 1; color: var(--felt); }
-.cb-lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-dim); margin-top: 4px; }
-.cb-colon { font-family: var(--font-mono); font-size: clamp(28px, 6vw, 44px); font-weight: 600; color: var(--ink-dim); opacity: 0.5; align-self: flex-start; margin-top: 4px; }
+/* Sized off the banner's own width (container query units) rather than the
+   viewport, so all four segments always fit on one row no matter how
+   narrow the card gets — it shrinks instead of wrapping. */
+.cb-grid { display: flex; align-items: center; justify-content: center; gap: 1cqi; flex-wrap: nowrap; }
+.cb-seg { display: flex; flex-direction: column; align-items: center; min-width: 0; flex: 0 1 auto; }
+.cb-num { font-family: var(--font-mono); font-size: clamp(16px, 8.5cqi, 56px); font-weight: 600; line-height: 1; color: var(--felt); white-space: nowrap; }
+.cb-lbl { font-size: clamp(6.5px, 2cqi, 11px); text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-dim); margin-top: 4px; white-space: nowrap; }
+.cb-colon { font-family: var(--font-mono); font-size: clamp(11px, 6cqi, 44px); font-weight: 600; color: var(--ink-dim); opacity: 0.5; align-self: flex-start; margin-top: 4px; flex: 0 0 auto; }
 .cb-sub { margin-top: 10px; font-size: 13.5px; color: var(--ink-dim); }
+.cb-sub.cb-date { font-size: 15.5px; font-weight: 600; }
 
 .tabs { display: flex; gap: 4px; margin: 22px 0 18px; border-bottom: 2px solid var(--line); }
 .tab-btn {
@@ -127,7 +135,19 @@ input, select { font-family: var(--font-body); font-size: 15px; }
 .tab-panel.active { display: block; }
 
 .grid-2 { display: grid; grid-template-columns: 1.1fr 1fr; gap: 18px; }
-@media (max-width: 720px) { .grid-2 { grid-template-columns: 1fr; } }
+@media (max-width: 720px) {
+  .grid-2 { grid-template-columns: 1fr; }
+  /* On mobile: signup form first (so people don't have to scroll past the
+     roster to find it), then the roster, then host controls and the
+     heartbeat button last. Unwrap the two desktop columns so each card
+     underneath can be ordered independently. */
+  .signup-grid .signup-col,
+  .signup-grid .roster-col { display: contents; }
+  .signup-grid .reserve-card { order: 1; }
+  .signup-grid .roster-col > .card { order: 2; }
+  .signup-grid .host-box { order: 3; }
+  .signup-grid .heartbeat-row { order: 4; }
+}
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); }
 .card + .card { margin-top: 16px; }
 .card h2 { font-size: 24px; margin-bottom: 4px; letter-spacing: 0.015em; }
@@ -136,8 +156,8 @@ input, select { font-family: var(--font-body); font-size: 15px; }
 .venmo-row .sub { flex: 1; min-width: 180px; margin-bottom: 0; }
 .venmo-qr-wrap { display: flex; flex-direction: column; align-items: center; gap: 5px; flex-shrink: 0; }
 .venmo-qr {
-  width: 108px; height: 108px; border-radius: 10px; border: 2px solid var(--gold);
-  background: #fff; padding: 5px; box-shadow: var(--shadow); display: block;
+  width: 150px; height: 150px; border-radius: 10px; border: 2px solid var(--gold);
+  background: #fff; padding: 6px; box-shadow: var(--shadow); display: block;
 }
 .venmo-qr-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-dim); }
 @media (max-width: 480px) {
@@ -287,6 +307,14 @@ table.blinds tr.current td:last-child { border-right: 4px solid var(--felt); }
 .seat-chips {
   display: block; font-family: var(--font-mono); font-weight: 600; font-size: 10.5px;
   color: var(--ink-dim); margin-top: 1px;
+}
+.seat.has-dealer { border-color: var(--gold); }
+.dealer-btn {
+  position: absolute; top: -9px; right: -9px; width: 18px; height: 18px;
+  border-radius: 50%; background: #fff; color: #111; border: 1.5px solid var(--felt-deep);
+  font-family: var(--font-mono); font-weight: 700; font-size: 10px;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4);
 }
 
 .standings-row { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 14px; }

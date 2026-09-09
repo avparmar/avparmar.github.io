@@ -21,16 +21,16 @@ const liveRef = doc(db, "live", "state");
 const signupsCol = collection(db, "signups");
 
 // ---------- Blind schedule ----------
-// 20 levels, no antes. Rebuys are unlimited through the end of Level 4
-// (index 3, right before the first break). The one-time top-off is
+// 20 levels, no antes. Rebuys are unlimited through the end of Level 5
+// (index 4, right before the first break). The one-time top-off is
 // offered starting at that same break.
 const BLIND_LEVELS = [
   { sb: 75, bb: 150 },
   { sb: 100, bb: 200 },
   { sb: 150, bb: 300 },
   { sb: 200, bb: 400 },
-  { brk: true, mins: 10, label: "Bathroom break — rebuy period ends" },
   { sb: 300, bb: 600 },
+  { brk: true, mins: 10, label: "Bathroom break — rebuy period ends" },
   { sb: 500, bb: 1000 },
   { sb: 1000, bb: 2000 },
   { sb: 1500, bb: 3000 },
@@ -56,18 +56,19 @@ const DEFAULT_CONFIG = {
   name: "Poker Tournament",
   dateISO: "2026-09-19T15:00",
   location: "TBD — add your address in Host Settings",
+  hostPhone: "7746706693",
   venmo: "@adi2015",
   buyIn: 50,
   rebuyPrice: 50,
   topOffPrice: 25,
   startingStack: 10000,
   rebuyStack: 10000,
-  capacity: 16,
+  capacity: 18,
   hostPin: "1919"
 };
 const DEFAULT_LIVE = {
   phase: "setup", levelIndex: 0, levelEndsAt: null, remainingMs: null,
-  seating: null, eliminations: [], chipCounts: {}, chipCountsAt: null, chipCountsLabel: null
+  seating: null, dealerButtons: [], eliminations: [], chipCounts: {}, chipCountsAt: null, chipCountsLabel: null
 };
 
 // ---------- Local state ----------
@@ -89,6 +90,16 @@ function esc(s) {
 }
 function fmtMoney(n) { return "$" + Math.round(n).toLocaleString(); }
 function fmtChips(n) { return n.toLocaleString(); }
+function fmtPhone(raw) {
+  const digits = String(raw || "").replace(/\D/g, "");
+  if (digits.length === 10) return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+  if (digits.length === 11 && digits[0] === "1") return `(${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
+  return raw;
+}
+function telHref(raw) {
+  const digits = String(raw || "").replace(/\D/g, "");
+  return "tel:+1" + digits;
+}
 
 function confirmedList() { return SIGNUPS.filter((p) => p.confirmed); }
 function pendingList() { return SIGNUPS.filter((p) => !p.confirmed); }
@@ -184,11 +195,12 @@ async function saveEventSettings(form) {
     name: form.name.value.trim() || CONFIG.name,
     dateISO: form.dateISO.value || CONFIG.dateISO,
     location: form.location.value.trim(),
+    hostPhone: form.hostPhone.value.trim() || CONFIG.hostPhone,
     venmo: form.venmo.value.trim() || CONFIG.venmo,
     buyIn: Math.max(0, Number(form.buyIn.value) || 0),
     rebuyPrice: Math.max(0, Number(form.rebuyPrice.value) || 0),
     topOffPrice: Math.max(0, Number(form.topOffPrice.value) || 0),
-    capacity: Math.max(2, Number(form.capacity.value) || 16),
+    capacity: Math.max(2, Number(form.capacity.value) || 18),
     hostPin: form.hostPin.value.trim() || CONFIG.hostPin
   }, { merge: true });
 }
@@ -271,6 +283,9 @@ function checkAutoAdvance() {
   if (Date.now() < LIVE.levelEndsAt) return;
   advanceAfterExpiry();
 }
+function pickDealer(ids) {
+  return ids.length ? ids[Math.floor(Math.random() * ids.length)] : null;
+}
 async function generateSeating() {
   const players = confirmedList().filter((p) => (LIVE.eliminations || []).indexOf(p.id) === -1);
   const ids = players.map((p) => p.id);
@@ -282,14 +297,27 @@ async function generateSeating() {
   // table is stored as a map with an `ids` array field, not a bare array.
   const rawTables = ids.length <= 9 ? [ids] : [ids.slice(0, Math.ceil(ids.length / 2)), ids.slice(Math.ceil(ids.length / 2))];
   const tables = rawTables.map((t) => ({ ids: t }));
-  await setDoc(liveRef, { seating: { tables } }, { merge: true });
+  // Randomly hand each table its own dealer button, same as a real room would.
+  const dealerButtons = tables.map((t) => pickDealer(t.ids));
+  await setDoc(liveRef, { seating: { tables }, dealerButtons }, { merge: true });
 }
 async function markEliminated(id) {
   if (!id) return;
   const eliminations = [...(LIVE.eliminations || []), id];
   let seating = LIVE.seating;
-  if (seating) seating = { tables: seating.tables.map((t) => ({ ids: t.ids.filter((pid) => pid !== id) })) };
-  await setDoc(liveRef, { eliminations, seating }, { merge: true });
+  let dealerButtons = LIVE.dealerButtons ? LIVE.dealerButtons.slice() : [];
+  if (seating) {
+    const tables = seating.tables.map((t) => ({ ids: t.ids.filter((pid) => pid !== id) }));
+    // If the player holding a table's button just busted, hand it to someone
+    // else still seated there; otherwise leave that table's button alone.
+    dealerButtons = tables.map((t, i) => {
+      const current = dealerButtons[i];
+      if (current && current !== id && t.ids.indexOf(current) !== -1) return current;
+      return pickDealer(t.ids);
+    });
+    seating = { tables };
+  }
+  await setDoc(liveRef, { eliminations, seating, dealerButtons }, { merge: true });
 }
 async function restoreEliminated(id) {
   if (!id) return;
@@ -398,7 +426,8 @@ function renderHeader() {
           <div class="eyebrow">Home Tournament</div>
           <h1>${esc(CONFIG.name)}</h1>
           <div class="meta">
-            <span>📍 ${esc(CONFIG.location)}</span>
+            <span class="meta-location">📍 ${esc(CONFIG.location)}</span>
+            ${CONFIG.hostPhone ? `<span>📱 <a href="${telHref(CONFIG.hostPhone)}">${fmtPhone(CONFIG.hostPhone)}</a> · call or text/WhatsApp</span>` : ""}
           </div>
         </div>
         <div class="seat-meter"><div class="num">${confirmed} / ${CONFIG.capacity}</div><div class="lbl">Seats confirmed</div></div>
@@ -419,7 +448,7 @@ function renderCountdownBanner() {
   if (msLeft <= 0) {
     return `<div class="countdown-banner">
       <div class="cb-eyebrow">Kickoff time has arrived</div>
-      <div class="cb-sub">Waiting for the host to begin — see you at the table.</div>
+      <div class="cb-sub cb-date">Waiting for the host to begin — see you at the table.</div>
     </div>`;
   }
   const parts = msToParts(msLeft);
@@ -434,7 +463,7 @@ function renderCountdownBanner() {
       <span class="cb-colon">:</span>
       <div class="cb-seg"><span class="cb-num" id="cd-s">${pad2(parts.s)}</span><span class="cb-lbl">Sec</span></div>
     </div>
-    <div class="cb-sub">${esc(dateStr)}</div>
+    <div class="cb-sub cb-date">${esc(dateStr)}</div>
   </div>`;
 }
 function pad2(n) { return String(n).padStart(2, "0"); }
@@ -453,7 +482,7 @@ function tabBtn(id, label) {
 
 function renderSignupTab() {
   const confirmed = confirmedList(), pending = pendingList();
-  let html = '<div class="grid-2"><div>';
+  let html = '<div class="grid-2 signup-grid"><div class="roster-col">';
 
   html += `<div class="card"><h2>Confirmed roster (${confirmed.length}/${CONFIG.capacity})</h2>`;
   html += confirmed.length ? renderRosterTable(confirmed, false) : `<div class="empty-note">No one confirmed yet.</div>`;
@@ -463,7 +492,7 @@ function renderSignupTab() {
   }
   html += `</div></div>`;
 
-  html += `<div><div class="card"><h2>Reserve a seat</h2>
+  html += `<div class="signup-col"><div class="card reserve-card"><h2>Reserve a seat</h2>
     <div class="venmo-row">
       <div class="sub">Send ${fmtMoney(CONFIG.buyIn)} to <strong>${esc(CONFIG.venmo)}</strong> on Venmo, then submit this form with your name. I'll flip you to "Confirmed" once the payment lands — you're not locked in until you see that. Buy-ins aren't refundable for a no-show.</div>
       <div class="venmo-qr-wrap">
@@ -480,7 +509,7 @@ function renderSignupTab() {
     <div class="empty-note" style="margin-top:12px;">Just want to deal instead of play? Let me know directly and I'll pencil you in.</div>
     </div>`;
   html += renderHostBox("signup");
-  html += `<div class="btn-row" style="margin-top:14px;justify-content:center;">
+  html += `<div class="btn-row heartbeat-row" style="margin-top:14px;justify-content:center;">
     <button class="btn secondary" id="heartbeat-btn">Raise heartbeat</button>
   </div>`;
   html += `</div></div>`;
@@ -496,10 +525,11 @@ function renderRosterTable(list, pending) {
 }
 function renderPrizePoolCard() {
   const pot = potTotals();
+  const cutoffNum = levelIndexToNumber(FIRST_BREAK_INDEX - 1);
   return `<div class="countdown-banner">
     <div class="cb-eyebrow">Estimated prize pool</div>
     <div class="cb-num">${fmtMoney(pot.projected)}</div>
-    <div class="cb-sub">Buy-in ${fmtMoney(CONFIG.buyIn)} · rebuy ${fmtMoney(CONFIG.rebuyPrice)} (unlimited through Level 4) · top-off ${fmtMoney(CONFIG.topOffPrice)} (one-time, at the first break)</div>
+    <div class="cb-sub">Buy-in ${fmtMoney(CONFIG.buyIn)} · rebuy ${fmtMoney(CONFIG.rebuyPrice)} (unlimited through Level ${cutoffNum}) · top-off ${fmtMoney(CONFIG.topOffPrice)} (one-time, at the first break)</div>
   </div>`;
 }
 function renderTopRow() {
@@ -568,6 +598,7 @@ function renderEventSettingsForm() {
     <div class="field"><label>Event name</label><input name="name" value="${esc(e.name)}"></div>
     <div class="field"><label>Date &amp; time</label><input type="datetime-local" name="dateISO" value="${esc(e.dateISO)}"></div>
     <div class="field"><label>Location</label><input name="location" value="${esc(e.location)}"></div>
+    <div class="field"><label>Host phone / WhatsApp</label><input name="hostPhone" value="${esc(e.hostPhone)}"></div>
     <div class="field"><label>Venmo handle</label><input name="venmo" value="${esc(e.venmo)}"></div>
     <div class="field"><label>Buy-in ($)</label><input type="number" min="0" name="buyIn" value="${e.buyIn}"></div>
     <div class="field"><label>Rebuy price ($)</label><input type="number" min="0" name="rebuyPrice" value="${e.rebuyPrice}"></div>
@@ -596,9 +627,8 @@ function renderRulesTab() {
 
   html += `<div class="card"><h2>Table balancing</h2><ul class="rules-list">
     <li>9 or fewer confirmed players: one table from the start.</li>
-    <li>10–18 confirmed players: two tables, split as evenly as possible.</li>
-    <li>Once eliminations bring the field to 9 or fewer, combine onto one table — use "Re-shuffle seating" on the Live Day tab.</li>
-    <li>Dealer button moves clockwise; deal yourself or rotate the deal each hand, host's call.</li>
+    <li>10–${e.capacity} confirmed players: two tables, split as evenly as possible.</li>
+    <li>Once eliminations bring the field to 9 or fewer, tables will be balanced down to one.</li>
   </ul></div>`;
 
   html += `<div class="card"><h2>House rules</h2><ul class="rules-list">
@@ -684,12 +714,14 @@ function renderLiveTab() {
     LIVE.seating.tables.forEach((t, ti) => {
       const ids = t.ids;
       if (!ids.length) return;
+      const dealerId = LIVE.dealerButtons && LIVE.dealerButtons[ti];
       html += `<div class="table-oval-box"><h3>Table ${ti + 1} · ${ids.length} players</h3><div class="table-oval">`;
       ids.forEach((id) => {
         const p = findPlayer(id);
         if (!p) return;
         const chips = LIVE.chipCounts && LIVE.chipCounts[id] != null ? LIVE.chipCounts[id] : null;
-        html += `<div class="seat"><span class="seat-name">${esc(p.name)}</span>${chips != null ? `<span class="seat-chips">${fmtChips(chips)}</span>` : ""}</div>`;
+        const isDealer = id === dealerId;
+        html += `<div class="seat${isDealer ? " has-dealer" : ""}">${isDealer ? '<span class="dealer-btn" title="Dealer">D</span>' : ""}<span class="seat-name">${esc(p.name)}</span>${chips != null ? `<span class="seat-chips">${fmtChips(chips)}</span>` : ""}</div>`;
       });
       html += "</div></div>";
     });
