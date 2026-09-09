@@ -25,7 +25,7 @@ const signupsCol = collection(db, "signups");
 // (index 4, right before the first break). The one-time top-off is
 // offered starting at that same break.
 const BLIND_LEVELS = [
-  { sb: 75, bb: 150 },
+  { sb: 50, bb: 100 },
   { sb: 100, bb: 200 },
   { sb: 150, bb: 300 },
   { sb: 200, bb: 400 },
@@ -51,6 +51,11 @@ const BLIND_LEVELS = [
 ];
 BLIND_LEVELS.forEach((lv) => { if (!lv.mins) lv.mins = 20; });
 const FIRST_BREAK_INDEX = BLIND_LEVELS.findIndex((lv) => lv.brk);
+
+// ---------- Payouts ----------
+// Top 5 finishers are paid, in this order.
+const PAYOUT_PCTS = [40, 25, 15, 11, 9];
+const PAYOUT_PLACE_LABELS = ["1st", "2nd", "3rd", "4th", "5th"];
 
 const DEFAULT_CONFIG = {
   name: "Poker Tournament",
@@ -576,7 +581,7 @@ function renderHostBox(context) {
           <span class="name">${esc(p.name)}${isOut ? '<span class="elim-tag">Eliminated</span>' : ""}</span>
           <span class="stepper">Rebuys <button type="button" data-act="rebuy-dec" data-id="${p.id}">−</button>${p.rebuys || 0}<button type="button" data-act="rebuy-inc" data-id="${p.id}">+</button></span>
           <span class="pill${p.topOff ? " on" : ""}" data-act="toggle-topoff" data-id="${p.id}" style="cursor:pointer;">Top-off</span>
-          <input class="chip-input" type="number" min="0" step="25" name="chip_${p.id}" value="${LIVE.chipCounts && LIVE.chipCounts[p.id] != null ? LIVE.chipCounts[p.id] : ""}" placeholder="Chips">
+          <input class="chip-input" type="number" min="0" step="50" name="chip_${p.id}" value="${LIVE.chipCounts && LIVE.chipCounts[p.id] != null ? LIVE.chipCounts[p.id] : ""}" placeholder="Chips">
           ${isOut
             ? `<button type="button" class="icon-btn" data-act="restore" data-id="${p.id}" title="Restore player">↺</button>`
             : (activeCount > 1 ? `<button type="button" class="icon-btn" data-act="eliminate" data-id="${p.id}" title="Mark eliminated">✕</button>` : "<span></span>")}
@@ -621,7 +626,7 @@ function renderRulesTab() {
       <li>Starting stack: <strong>${fmtChips(e.startingStack)}</strong> in chips for the ${fmtMoney(e.buyIn)} buy-in.</li>
       <li><strong>Unlimited rebuys</strong> (${fmtMoney(e.rebuyPrice)} each for a full ${fmtChips(e.rebuyStack)}-chip stack) through the end of Level ${cutoffNum}, while your count is at or below starting stack.</li>
       <li>One-time optional top-off (${fmtMoney(e.topOffPrice)}) at the first break — brings your stack up to, but not past, the ${fmtChips(e.startingStack)} starting stack.</li>
-      <li>Top 3 finishers are paid. See the payout split below.</li>
+      <li>Top ${PAYOUT_PCTS.length} finishers are paid. See the payout split below.</li>
       <li>Buy-ins and rebuys are non-refundable.</li>
     </ul></div>`;
 
@@ -641,7 +646,7 @@ function renderRulesTab() {
 
   html += '<div><div class="card"><h2>Payouts</h2>' +
     `<div class="sub">Estimated on the current pool of ${fmtMoney(pot.projected)}</div>` +
-    `<div class="payout-row">${payoutCard("1st", 50, pot.projected, true)}${payoutCard("2nd", 30, pot.projected, false)}${payoutCard("3rd", 20, pot.projected, false)}</div></div>`;
+    `<div class="payout-row">${PAYOUT_PCTS.map((pct, i) => payoutCard(PAYOUT_PLACE_LABELS[i], pct, pot.projected, i === 0)).join("")}</div></div>`;
 
   html += `<div class="card"><h2>Blind schedule</h2><div class="sub">${BLIND_LEVELS.filter((l) => !l.brk).length} levels</div>
     <div class="table-scroll"><table class="blinds"><thead><tr><th>Level</th><th>Blinds</th><th>Length</th></tr></thead><tbody>`;
@@ -767,8 +772,8 @@ function renderLiveTab() {
     rows.forEach((r) => {
       const p = findPlayer(r.id);
       if (!p) return;
-      const top = r.place <= 3;
-      const pct = r.place === 1 ? 50 : r.place === 2 ? 30 : r.place === 3 ? 20 : 0;
+      const top = r.place <= PAYOUT_PCTS.length;
+      const pct = top ? PAYOUT_PCTS[r.place - 1] : 0;
       html += `<div class="standings-row${top ? " top" : ""}"><span class="place-num">${r.place}</span><span>${esc(p.name)}</span>${top ? `<span class="payout">${fmtMoney(pot.projected * pct / 100)} payout</span>` : ""}</div>`;
     });
     if (remaining > 1) html += `<div class="empty-note" style="margin-top:8px;">${remaining} players still in it.</div>`;
