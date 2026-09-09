@@ -53,7 +53,7 @@ BLIND_LEVELS.forEach((lv) => { if (!lv.mins) lv.mins = 20; });
 const FIRST_BREAK_INDEX = BLIND_LEVELS.findIndex((lv) => lv.brk);
 
 const DEFAULT_CONFIG = {
-  name: "Adi's Poker Night",
+  name: "Poker Tournament",
   dateISO: "2026-09-19T15:00",
   location: "TBD — add your address in Host Settings",
   venmo: "@adi2015",
@@ -67,7 +67,7 @@ const DEFAULT_CONFIG = {
 };
 const DEFAULT_LIVE = {
   phase: "setup", levelIndex: 0, levelEndsAt: null, remainingMs: null,
-  seating: null, eliminations: [], chipCounts: {}, chipCountsAt: null
+  seating: null, eliminations: [], chipCounts: {}, chipCountsAt: null, chipCountsLabel: null
 };
 
 // ---------- Local state ----------
@@ -78,6 +78,7 @@ let activeTab = "signup";
 let hostUnlocked = false;
 try { hostUnlocked = localStorage.getItem("pokerHostUnlocked") === "1"; } catch (e) {}
 let clockInterval = null;
+let countdownInterval = null;
 let seededConfig = false, seededLive = false;
 
 function $(id) { return document.getElementById(id); }
@@ -98,8 +99,7 @@ function potTotals() {
   let rebuys = 0, topOffs = 0;
   confirmed.forEach((p) => { rebuys += p.rebuys || 0; if (p.topOff) topOffs += 1; });
   const projected = confirmed.length * CONFIG.buyIn + rebuys * CONFIG.rebuyPrice + topOffs * CONFIG.topOffPrice;
-  const paidCount = confirmed.filter((p) => p.paid).length;
-  return { confirmed: confirmed.length, projected, paidCount, rebuys, topOffs };
+  return { confirmed: confirmed.length, projected, rebuys, topOffs };
 }
 function levelLabel(lv) {
   if (lv.brk) return lv.label;
@@ -112,6 +112,16 @@ function levelIndexToNumber(idx) {
 }
 function remainingAfterEliminations() {
   return confirmedList().length - (LIVE.eliminations || []).length;
+}
+function chipTallyLabel() {
+  if (!LIVE || LIVE.phase === "setup" || LIVE.levelIndex == null) return "Tournament start";
+  const lv = BLIND_LEVELS[LIVE.levelIndex];
+  if (lv && lv.brk) {
+    let breakNum = 0;
+    for (let i = 0; i <= LIVE.levelIndex; i++) if (BLIND_LEVELS[i].brk) breakNum++;
+    return "Break " + breakNum;
+  }
+  return "Level " + levelIndexToNumber(LIVE.levelIndex);
 }
 
 // ---------- Firestore wiring ----------
@@ -142,11 +152,11 @@ function startListeners() {
 }
 
 // ---------- Signup actions ----------
-async function submitSignup(name, note) {
+async function submitSignup(name, note, message) {
   name = (name || "").trim();
   if (!name) return;
   await addDoc(signupsCol, {
-    name, note: (note || "").trim(), confirmed: false, paid: false,
+    name, note: (note || "").trim(), message: (message || "").trim(), confirmed: false,
     rebuys: 0, topOff: false, ts: Date.now()
   });
 }
@@ -156,10 +166,6 @@ async function toggleConfirmed(id) {
     if (!confirm("That's past your " + CONFIG.capacity + "-seat capacity. Confirm anyway?")) return;
   }
   await updateDoc(doc(db, "signups", id), { confirmed: !p.confirmed });
-}
-async function togglePaid(id) {
-  const p = findPlayer(id); if (!p) return;
-  await updateDoc(doc(db, "signups", id), { paid: !p.paid });
 }
 async function toggleTopOff(id) {
   const p = findPlayer(id); if (!p) return;
@@ -220,10 +226,50 @@ async function resumeClock() {
 }
 async function nextLevel() { await startLevel(Math.min(BLIND_LEVELS.length - 1, LIVE.levelIndex + 1), null); }
 async function prevLevel() { await startLevel(Math.max(0, LIVE.levelIndex - 1), null); }
+async function restartLevel() { await startLevel(LIVE.levelIndex, null); }
 async function beginTournament() {
-  await setDoc(liveRef, { eliminations: [], chipCounts: {}, chipCountsAt: null }, { merge: true });
+  const chipCounts = {};
+  confirmedList().forEach((p) => { chipCounts[p.id] = CONFIG.startingStack; });
+  await setDoc(liveRef, {
+    eliminations: [], chipCounts, chipCountsAt: Date.now(), chipCountsLabel: "Tournament start"
+  }, { merge: true });
   await generateSeating();
   await startLevel(0, null);
+}
+
+// Blinds advance on their own once the clock is running: when a level's
+// timer hits zero we move straight to the next one, unless that next one
+// is a scheduled break — then we stop and wait for the host to hit Resume
+// (which is also the natural moment to update chip stacks).
+let autoAdvancing = false;
+async function advanceAfterExpiry() {
+  if (autoAdvancing) return;
+  autoAdvancing = true;
+  try {
+    const nextIdx = LIVE.levelIndex + 1;
+    if (nextIdx >= BLIND_LEVELS.length) {
+      await setDoc(liveRef, { phase: "paused", remainingMs: 0, levelEndsAt: null }, { merge: true });
+      return;
+    }
+    const nextLv = BLIND_LEVELS[nextIdx];
+    if (nextLv.brk) {
+      await setDoc(liveRef, {
+        levelIndex: nextIdx, phase: "paused", remainingMs: nextLv.mins * 60000, levelEndsAt: null
+      }, { merge: true });
+    } else {
+      await setDoc(liveRef, {
+        levelIndex: nextIdx, phase: "running", levelEndsAt: Date.now() + nextLv.mins * 60000, remainingMs: null
+      }, { merge: true });
+    }
+  } finally {
+    autoAdvancing = false;
+  }
+}
+function checkAutoAdvance() {
+  if (!CONFIG || !LIVE) return;
+  if (LIVE.phase !== "running" || !LIVE.levelEndsAt) return;
+  if (Date.now() < LIVE.levelEndsAt) return;
+  advanceAfterExpiry();
 }
 async function generateSeating() {
   const players = confirmedList().filter((p) => (LIVE.eliminations || []).indexOf(p.id) === -1);
@@ -232,66 +278,106 @@ async function generateSeating() {
     const j = Math.floor(Math.random() * (i + 1));
     [ids[i], ids[j]] = [ids[j], ids[i]];
   }
-  const tables = ids.length <= 9 ? [ids] : [ids.slice(0, Math.ceil(ids.length / 2)), ids.slice(Math.ceil(ids.length / 2))];
+  // Firestore rejects arrays that directly contain other arrays, so each
+  // table is stored as a map with an `ids` array field, not a bare array.
+  const rawTables = ids.length <= 9 ? [ids] : [ids.slice(0, Math.ceil(ids.length / 2)), ids.slice(Math.ceil(ids.length / 2))];
+  const tables = rawTables.map((t) => ({ ids: t }));
   await setDoc(liveRef, { seating: { tables } }, { merge: true });
 }
 async function markEliminated(id) {
   if (!id) return;
   const eliminations = [...(LIVE.eliminations || []), id];
   let seating = LIVE.seating;
-  if (seating) seating = { tables: seating.tables.map((t) => t.filter((pid) => pid !== id)) };
+  if (seating) seating = { tables: seating.tables.map((t) => ({ ids: t.ids.filter((pid) => pid !== id) })) };
   await setDoc(liveRef, { eliminations, seating }, { merge: true });
 }
-async function undoElimination() {
-  const eliminations = (LIVE.eliminations || []).slice(0, -1);
-  await setDoc(liveRef, { eliminations }, { merge: true });
+async function restoreEliminated(id) {
+  if (!id) return;
+  const elimList = LIVE.eliminations || [];
+  if (elimList.indexOf(id) === -1) return;
+  const eliminations = elimList.filter((eid) => eid !== id);
+  let seating = LIVE.seating;
+  if (seating && seating.tables.length) {
+    const tables = seating.tables.map((t) => ({ ids: t.ids.slice() }));
+    let minIdx = 0;
+    for (let i = 1; i < tables.length; i++) if (tables[i].ids.length < tables[minIdx].ids.length) minIdx = i;
+    tables[minIdx] = { ids: [...tables[minIdx].ids, id] };
+    seating = { tables };
+  }
+  await setDoc(liveRef, { eliminations, seating }, { merge: true });
 }
 async function resetTournament() {
   if (!confirm("Reset the live tournament (seating, blind clock, eliminations, chip tallies)? Sign-ups are kept.")) return;
   await setDoc(liveRef, DEFAULT_LIVE);
 }
 async function saveChipTally(form) {
-  const remaining = confirmedList().filter((p) => (LIVE.eliminations || []).indexOf(p.id) === -1);
   const chipCounts = {};
-  remaining.forEach((p) => {
+  confirmedList().forEach((p) => {
     const v = Number(form["chip_" + p.id]?.value);
     if (!isNaN(v) && v >= 0) chipCounts[p.id] = v;
   });
-  await setDoc(liveRef, { chipCounts, chipCountsAt: Date.now() }, { merge: true });
+  await setDoc(liveRef, { chipCounts, chipCountsAt: Date.now(), chipCountsLabel: chipTallyLabel() }, { merge: true });
 }
 
 // ---------- Rendering ----------
-function daysUntil(iso) {
-  const d = new Date(iso);
-  const days = Math.ceil((d.getTime() - Date.now()) / 86400000);
-  if (isNaN(days)) return "";
-  if (days > 1) return days + " days to go";
-  if (days === 1) return "Tomorrow";
-  if (days === 0) return "Today";
-  return "In progress or past";
-}
-
 function renderHeader() {
   const confirmed = confirmedList().length;
-  const d = new Date(CONFIG.dateISO);
-  const dateStr = isNaN(d.getTime()) ? "" :
-    d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) + " · " +
-    d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   return `
     <div class="hero">
-      <div>
-        <div class="eyebrow">Home Tournament</div>
-        <h1>${esc(CONFIG.name)}</h1>
-        <div class="meta">
-          <span>📅 ${esc(dateStr)}</span>
-          <span>⏱️ ${esc(daysUntil(CONFIG.dateISO))}</span>
-          <span>📍 ${esc(CONFIG.location)}</span>
+      <img class="hero-logo" src="logo-badge-wood.webp" alt="Grand Royale Survival Tournament badge">
+      <div class="hero-content">
+        <div class="hero-text">
+          <div class="eyebrow">Home Tournament</div>
+          <h1>${esc(CONFIG.name)}</h1>
+          <div class="meta">
+            <span>📍 ${esc(CONFIG.location)}</span>
+          </div>
         </div>
+        <div class="seat-meter"><div class="num">${confirmed} / ${CONFIG.capacity}</div><div class="lbl">Seats confirmed</div></div>
       </div>
-      <div class="seat-meter"><div class="num">${confirmed} / ${CONFIG.capacity}</div><div class="lbl">Seats confirmed</div></div>
     </div>
+    ${renderTopRow()}
     <div class="tabs">${tabBtn("signup", "Sign Up")}${tabBtn("rules", "Rules & Blinds")}${tabBtn("live", "Live Day")}</div>
   `;
+}
+
+function renderCountdownBanner() {
+  if (LIVE.phase !== "setup") return "";
+  const d = new Date(CONFIG.dateISO);
+  if (isNaN(d.getTime())) return "";
+  const dateStr = d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) + " · " +
+    d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const msLeft = d.getTime() - Date.now();
+  if (msLeft <= 0) {
+    return `<div class="countdown-banner">
+      <div class="cb-eyebrow">Kickoff time has arrived</div>
+      <div class="cb-sub">Waiting for the host to begin — see you at the table.</div>
+    </div>`;
+  }
+  const parts = msToParts(msLeft);
+  return `<div class="countdown-banner">
+    <div class="cb-eyebrow">Chips will fly in</div>
+    <div class="cb-grid" id="event-countdown">
+      <div class="cb-seg"><span class="cb-num" id="cd-d">${pad2(parts.d)}</span><span class="cb-lbl">Days</span></div>
+      <span class="cb-colon">:</span>
+      <div class="cb-seg"><span class="cb-num" id="cd-h">${pad2(parts.h)}</span><span class="cb-lbl">Hrs</span></div>
+      <span class="cb-colon">:</span>
+      <div class="cb-seg"><span class="cb-num" id="cd-m">${pad2(parts.m)}</span><span class="cb-lbl">Min</span></div>
+      <span class="cb-colon">:</span>
+      <div class="cb-seg"><span class="cb-num" id="cd-s">${pad2(parts.s)}</span><span class="cb-lbl">Sec</span></div>
+    </div>
+    <div class="cb-sub">${esc(dateStr)}</div>
+  </div>`;
+}
+function pad2(n) { return String(n).padStart(2, "0"); }
+function msToParts(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  return {
+    d: Math.floor(totalSec / 86400),
+    h: Math.floor((totalSec % 86400) / 3600),
+    m: Math.floor((totalSec % 3600) / 60),
+    s: totalSec % 60
+  };
 }
 function tabBtn(id, label) {
   return `<button class="tab-btn${activeTab === id ? " active" : ""}" data-tab="${id}">${label}</button>`;
@@ -299,36 +385,57 @@ function tabBtn(id, label) {
 
 function renderSignupTab() {
   const confirmed = confirmedList(), pending = pendingList();
-  const pot = potTotals();
   let html = '<div class="grid-2"><div>';
 
-  html += `<div class="card"><h2>Reserve a seat</h2>
-    <div class="sub">Send ${fmtMoney(CONFIG.buyIn)} to <strong>${esc(CONFIG.venmo)}</strong> on Venmo, then submit this form with your name. I'll flip you to "Confirmed" once the payment lands — you're not locked in until you see that. Buy-ins aren't refundable for a no-show.</div>
-    <form id="signup-form">
-      <div class="field"><label>Name</label><input name="name" required maxlength="40" placeholder="e.g. Sam Rivera"></div>
-      <div class="field"><label>Note (optional)</label><input name="note" maxlength="80" placeholder="already sent the $50, bringing a +1, etc."></div>
-      <button class="btn" type="submit">Submit</button>
-    </form></div>`;
-
-  html += `<div class="card"><h2>Confirmed (${confirmed.length}/${CONFIG.capacity})</h2>`;
-  html += confirmed.length
-    ? `<div class="chip-list">${confirmed.map((p) => `<span class="chip"><span class="dot"></span>${esc(p.name)}</span>`).join("")}</div>`
-    : `<div class="empty-note">No one confirmed yet.</div>`;
+  html += `<div class="card"><h2>Confirmed roster (${confirmed.length}/${CONFIG.capacity})</h2>`;
+  html += confirmed.length ? renderRosterTable(confirmed, false) : `<div class="empty-note">No one confirmed yet.</div>`;
   if (pending.length) {
-    html += `<h2 style="margin-top:16px;font-size:15px;">Pending Venmo confirmation (${pending.length})</h2>
-      <div class="chip-list">${pending.map((p) => `<span class="chip pending"><span class="dot"></span>${esc(p.name)}</span>`).join("")}</div>`;
+    html += `<h2 style="margin-top:18px;font-size:16px;">Pending deposit confirmation (${pending.length})</h2>`;
+    html += renderRosterTable(pending, true);
   }
   html += `</div></div>`;
 
-  html += `<div><div class="card"><h2>Estimated prize pool</h2>
-    <div class="sub">Buy-in ${fmtMoney(CONFIG.buyIn)} · rebuy ${fmtMoney(CONFIG.rebuyPrice)} (unlimited through Level 4) · top-off ${fmtMoney(CONFIG.topOffPrice)} (one-time, at the first break)</div>
-    <div class="pot-box">
-      <div class="pot-stat"><div class="amt">${fmtMoney(pot.projected)}</div><div class="lbl">Current pool</div></div>
-      <div class="pot-stat"><div class="amt">${pot.paidCount}/${pot.confirmed}</div><div class="lbl">Marked paid</div></div>
-    </div></div>`;
+  html += `<div><div class="card"><h2>Reserve a seat</h2>
+    <div class="venmo-row">
+      <div class="sub">Send ${fmtMoney(CONFIG.buyIn)} to <strong>${esc(CONFIG.venmo)}</strong> on Venmo, then submit this form with your name. I'll flip you to "Confirmed" once the payment lands — you're not locked in until you see that. Buy-ins aren't refundable for a no-show.</div>
+      <div class="venmo-qr-wrap">
+        <img class="venmo-qr" src="venmo.jpg" alt="Venmo QR code for ${esc(CONFIG.venmo)}">
+        <div class="venmo-qr-label">Scan to pay</div>
+      </div>
+    </div>
+    <form id="signup-form">
+      <div class="field"><label>Name</label><input name="name" required maxlength="40" placeholder="e.g. Edward Lee"></div>
+      <div class="field"><label>Message (optional, shown on the roster)</label><input name="message" maxlength="60" placeholder="e.g. bringing a +1, first time playing"></div>
+      <div class="field"><label>Note to host (optional, private)</label><input name="note" maxlength="80" placeholder="already sent the $50, etc. — only I see this"></div>
+      <button class="btn" type="submit">Submit</button>
+    </form>
+    <div class="empty-note" style="margin-top:12px;">Just want to deal instead of play? Let me know directly and I'll pencil you in.</div>
+    </div>`;
   html += renderHostBox("signup");
   html += `</div></div>`;
   return html;
+}
+
+function renderRosterTable(list, pending) {
+  const rows = list.map((p) => `<tr>
+    <td class="roster-name">${esc(p.name)}</td>
+    <td class="roster-note">${p.message ? esc(p.message) : ""}</td>
+  </tr>`).join("");
+  return `<table class="roster-table"><tbody>${rows}</tbody></table>`;
+}
+function renderPrizePoolCard() {
+  const pot = potTotals();
+  return `<div class="countdown-banner">
+    <div class="cb-eyebrow">Estimated prize pool</div>
+    <div class="cb-num">${fmtMoney(pot.projected)}</div>
+    <div class="cb-sub">Buy-in ${fmtMoney(CONFIG.buyIn)} · rebuy ${fmtMoney(CONFIG.rebuyPrice)} (unlimited through Level 4) · top-off ${fmtMoney(CONFIG.topOffPrice)} (one-time, at the first break)</div>
+  </div>`;
+}
+function renderTopRow() {
+  const cd = renderCountdownBanner();
+  const pool = renderPrizePoolCard();
+  if (cd) return `<div class="grid-2 top-row">${cd}${pool}</div>`;
+  return `<div class="top-row">${pool}</div>`;
 }
 
 function renderHostBox(context) {
@@ -346,17 +453,39 @@ function renderHostBox(context) {
   if (context === "signup") {
     html += '<div style="margin-top:12px;">';
     SIGNUPS.forEach((p) => {
-      html += `<div class="roster-row">
-        <span><span class="name">${esc(p.name)}</span>${p.note ? `<span class="note">${esc(p.note)}</span>` : ""}</span>
+      html += `<div class="roster-row compact">
+        <span><span class="name">${esc(p.name)}</span>${p.message ? `<span class="note">💬 ${esc(p.message)}</span>` : ""}${p.note ? `<span class="note">🔒 ${esc(p.note)}</span>` : ""}</span>
         <span class="pill${p.confirmed ? " on" : " warn"}" data-act="toggle-confirmed" data-id="${p.id}" style="cursor:pointer;">${p.confirmed ? "Confirmed" : "Pending"}</span>
-        <span class="pill${p.paid ? " on" : ""}" data-act="toggle-paid" data-id="${p.id}" style="cursor:pointer;">${p.paid ? "Paid" : "Unpaid"}</span>
-        <span class="stepper">Rebuys <button data-act="rebuy-dec" data-id="${p.id}">−</button>${p.rebuys || 0}<button data-act="rebuy-inc" data-id="${p.id}">+</button></span>
-        <span class="pill${p.topOff ? " on" : ""}" data-act="toggle-topoff" data-id="${p.id}" style="cursor:pointer;">Top-off</span>
         <button class="icon-btn" data-act="remove" data-id="${p.id}" title="Remove">✕</button>
       </div>`;
     });
     html += "</div>";
     html += `<details style="margin-top:14px;"><summary style="cursor:pointer;font-size:13px;color:var(--ink-dim);">Event settings</summary>${renderEventSettingsForm()}</details>`;
+  } else if (context === "live") {
+    const confirmed = confirmedList();
+    const elimSet = new Set(LIVE.eliminations || []);
+    const activeCount = confirmed.filter((p) => !elimSet.has(p.id)).length;
+    html += '<div style="margin-top:12px;">';
+    if (confirmed.length) {
+      html += `<div class="host-section-label">Players</div>`;
+      html += `<form id="tally-form">`;
+      confirmed.forEach((p) => {
+        const isOut = elimSet.has(p.id);
+        html += `<div class="roster-row live-row${isOut ? " eliminated" : ""}">
+          <span class="name">${esc(p.name)}${isOut ? '<span class="elim-tag">Eliminated</span>' : ""}</span>
+          <span class="stepper">Rebuys <button type="button" data-act="rebuy-dec" data-id="${p.id}">−</button>${p.rebuys || 0}<button type="button" data-act="rebuy-inc" data-id="${p.id}">+</button></span>
+          <span class="pill${p.topOff ? " on" : ""}" data-act="toggle-topoff" data-id="${p.id}" style="cursor:pointer;">Top-off</span>
+          <input class="chip-input" type="number" min="0" step="25" name="chip_${p.id}" value="${LIVE.chipCounts && LIVE.chipCounts[p.id] != null ? LIVE.chipCounts[p.id] : ""}" placeholder="Chips">
+          ${isOut
+            ? `<button type="button" class="icon-btn" data-act="restore" data-id="${p.id}" title="Restore player">↺</button>`
+            : (activeCount > 1 ? `<button type="button" class="icon-btn" data-act="eliminate" data-id="${p.id}" title="Mark eliminated">✕</button>` : "<span></span>")}
+        </div>`;
+      });
+      html += `<button class="btn secondary" type="submit" style="margin-top:12px;">Save chip counts</button></form>`;
+    } else {
+      html += `<div class="empty-note">No confirmed players yet.</div>`;
+    }
+    html += "</div>";
   }
   html += "</div>";
   return html;
@@ -405,16 +534,8 @@ function renderRulesTab() {
     <li class="warn-line">The 7-2 game is not on this time.</li>
     <li>Verbal declarations of a raise or call are binding; string bets (pushing chips in more than one motion without declaring) aren't allowed.</li>
     <li>An all-in player is live only for the pot(s) they covered — side pots form for the rest.</li>
-    <li>Phones on silent at the table; step away from the felt to take a call.</li>
   </ul></div>`;
 
-  html += `<div class="card"><h2>Chips</h2><div class="sub">5 colors, 10,000 starting stack</div>
-    <ul class="rules-list">
-      <li>Suggested breakdown per starting stack: 4×25, 4×100, 5×500, 7×1,000 (20 chips).</li>
-      <li>Color up the 25s at the bathroom break — every blind from Level 4 on is a clean multiple of 100.</li>
-      <li>Color up the 100s at the dinner break — blinds are clean multiples of 500 from Level 6 on.</li>
-      <li>Keep a spare set of chips within reach in case any one color runs thin during rebuys.</li>
-    </ul></div>`;
   html += "</div>";
 
   html += '<div><div class="card"><h2>Payouts</h2>' +
@@ -427,10 +548,17 @@ function renderRulesTab() {
   BLIND_LEVELS.forEach((lv, idx) => {
     if (!lv.brk) levelNum++;
     const isCurrent = LIVE && LIVE.phase !== "setup" && LIVE.levelIndex === idx;
-    html += `<tr class="${lv.brk ? "brk" : ""}${isCurrent ? " current" : ""}"><td>${lv.brk ? "—" : levelNum}</td>
+    html += `<tr class="${lv.brk ? "brk" : ""}${isCurrent ? " current" : ""}"><td>${lv.brk ? "—" : levelNum}${isCurrent ? ' <span class="now-badge">Now</span>' : ""}</td>
       <td class="num">${levelLabel(lv)}</td><td class="num">${lv.mins} min</td></tr>`;
   });
-  html += "</tbody></table></div></div></div></div>";
+  html += "</tbody></table></div></div>";
+
+  html += `<div class="card shirt-card"><h2>👀</h2>
+    <div class="sub">Dm me.</div>
+    <img class="shirt-img" src="shirt.jpeg" alt="Grand Royale Survival Tournament shirt, green tee on a wood floor">
+  </div>`;
+
+  html += "</div></div>";
   return html;
 }
 function payoutCard(place, pct, pool, first) {
@@ -443,7 +571,7 @@ function renderLiveTab() {
   let html = "";
 
   if (LIVE.phase === "setup") {
-    html += `<div class="banner info">The clock hasn't started. When everyone's seated and chipped up, hit "Begin tournament" below to shuffle seating and start Level 1.</div>`;
+    html += `<div class="banner info">The clock hasn't started. When everyone's seated and chipped up, hit "Begin tournament" below to shuffle seating and start Level 1 — blinds will advance on their own from there, and the clock will pause automatically at each scheduled break.</div>`;
   }
 
   const lv = BLIND_LEVELS[LIVE.levelIndex];
@@ -451,7 +579,8 @@ function renderLiveTab() {
   html += `<div class="clock-card${LIVE.phase === "paused" ? " paused" : ""}" id="clock-card">
     <div class="level-badge">${lv.brk ? "Break" : "Level " + levelIndexToNumber(LIVE.levelIndex)}${LIVE.phase === "paused" ? " · Paused" : ""}</div>
     <div class="countdown" id="countdown-num">--:--</div>
-    <div class="blinds-now">${levelLabel(lv)}</div>
+    <div class="blinds-now${lv.brk ? " brk-text" : ""}">${levelLabel(lv)}</div>
+    ${!lv.brk ? '<div class="blinds-lbl">Blinds</div>' : ""}
     ${nextLv ? `<div class="next-up">Next: ${levelLabel(nextLv)}</div>` : `<div class="next-up">Final scheduled level</div>`}
   </div>`;
 
@@ -462,25 +591,34 @@ function renderLiveTab() {
     } else {
       if (LIVE.phase === "running") html += `<button class="btn secondary" id="pause-btn">Pause</button>`;
       if (LIVE.phase === "paused") html += `<button class="btn" id="resume-btn">Resume</button>`;
-      html += `<button class="btn secondary" id="prev-btn">← Prev level</button>
+      html += `<button class="btn secondary" id="restart-btn">↺ Restart level</button>
+        <button class="btn secondary" id="prev-btn">← Prev level</button>
         <button class="btn secondary" id="next-btn">Next level →</button>
         <button class="btn danger" id="reset-btn">Reset tournament</button>`;
     }
     html += "</div>";
   }
+  if (LIVE.phase === "paused" && lv.brk) {
+    html += `<div class="banner warn" style="margin-top:14px;">${hostUnlocked
+      ? "On break — update chip counts below, then hit Resume when you're ready to continue."
+      : "On break — the host will resume shortly."}</div>`;
+  }
 
   const remaining = remainingAfterEliminations();
-  if (LIVE.seating && LIVE.seating.tables.some((t) => t.length)) {
+  if (LIVE.seating && LIVE.seating.tables.some((t) => t.ids.length)) {
     if (remaining <= 9 && LIVE.seating.tables.length > 1) {
       html += `<div class="banner warn" style="margin-top:16px;">Down to ${remaining} players — time to combine onto one table.</div>`;
     }
     html += '<div class="table-oval-wrap">';
-    LIVE.seating.tables.forEach((ids, ti) => {
+    LIVE.seating.tables.forEach((t, ti) => {
+      const ids = t.ids;
       if (!ids.length) return;
       html += `<div class="table-oval-box"><h3>Table ${ti + 1} · ${ids.length} players</h3><div class="table-oval">`;
       ids.forEach((id) => {
         const p = findPlayer(id);
-        if (p) html += `<div class="seat">${esc(p.name)}</div>`;
+        if (!p) return;
+        const chips = LIVE.chipCounts && LIVE.chipCounts[id] != null ? LIVE.chipCounts[id] : null;
+        html += `<div class="seat"><span class="seat-name">${esc(p.name)}</span>${chips != null ? `<span class="seat-chips">${fmtChips(chips)}</span>` : ""}</div>`;
       });
       html += "</div></div>";
     });
@@ -495,7 +633,7 @@ function renderLiveTab() {
     const stillIn = confirmed.filter((p) => (LIVE.eliminations || []).indexOf(p.id) === -1);
     html += `<div class="card" style="margin-top:20px;"><h2>Chip counts</h2>`;
     html += LIVE.chipCountsAt
-      ? `<div class="sub">As of ${new Date(LIVE.chipCountsAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</div>`
+      ? `<div class="sub">${esc(LIVE.chipCountsLabel || "Last update")} · ${new Date(LIVE.chipCountsAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</div>`
       : `<div class="sub">Not tallied yet — a good moment is any break.</div>`;
     const withCounts = stillIn.filter((p) => LIVE.chipCounts && LIVE.chipCounts[p.id] != null)
       .sort((a, b) => (LIVE.chipCounts[b.id] || 0) - (LIVE.chipCounts[a.id] || 0));
@@ -506,13 +644,6 @@ function renderLiveTab() {
     } else {
       html += `<div class="empty-note">No chip counts recorded yet.</div>`;
     }
-    if (hostUnlocked && stillIn.length) {
-      html += `<form id="tally-form" style="margin-top:12px;">`;
-      stillIn.forEach((p) => {
-        html += `<div class="tally-row"><label>${esc(p.name)}</label><input type="number" min="0" step="25" name="chip_${p.id}" value="${LIVE.chipCounts && LIVE.chipCounts[p.id] != null ? LIVE.chipCounts[p.id] : ""}" placeholder="chip count"></div>`;
-      });
-      html += `<button class="btn secondary" type="submit" style="margin-top:10px;">Save chip counts</button></form>`;
-    }
     html += "</div>";
   }
 
@@ -520,10 +651,12 @@ function renderLiveTab() {
   html += '<div class="card" style="margin-top:20px;"><h2>Standings</h2>';
   if (!confirmed.length) {
     html += `<div class="empty-note">No confirmed players yet.</div>`;
+  } else if (LIVE.phase === "setup") {
+    html += `<div class="empty-note">Standings and payouts will show up here once the tournament begins.</div>`;
   } else {
     const elim = LIVE.eliminations || [];
     const rows = [];
-    if (remaining === 1) {
+    if (remaining === 1 && confirmed.length > 1) {
       const winnerId = confirmed.map((p) => p.id).find((id) => elim.indexOf(id) === -1);
       rows.push({ place: 1, id: winnerId });
     }
@@ -533,22 +666,23 @@ function renderLiveTab() {
       if (!p) return;
       const top = r.place <= 3;
       const pct = r.place === 1 ? 50 : r.place === 2 ? 30 : r.place === 3 ? 20 : 0;
-      html += `<div class="standings-row${top ? " top" : ""}"><span class="place-num">${r.place}</span><span>${esc(p.name)}</span>${top ? `<span class="payout">${fmtMoney(pot.projected * pct / 100)}</span>` : ""}</div>`;
+      html += `<div class="standings-row${top ? " top" : ""}"><span class="place-num">${r.place}</span><span>${esc(p.name)}</span>${top ? `<span class="payout">${fmtMoney(pot.projected * pct / 100)} payout</span>` : ""}</div>`;
     });
     if (remaining > 1) html += `<div class="empty-note" style="margin-top:8px;">${remaining} players still in it.</div>`;
-  }
-  if (hostUnlocked && LIVE.phase !== "setup" && remaining > 1) {
-    const stillIn = confirmed.filter((p) => (LIVE.eliminations || []).indexOf(p.id) === -1);
-    html += `<div class="btn-row" style="margin-top:12px;">
-      <select id="elim-select">${stillIn.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>
-      <button class="btn secondary" id="elim-btn">Mark eliminated</button>`;
-    if ((LIVE.eliminations || []).length) html += `<button class="btn secondary" id="undo-elim-btn">Undo last</button>`;
-    html += "</div>";
+    else if (confirmed.length === 1) html += `<div class="empty-note" style="margin-top:8px;">Only one confirmed player — standings need at least two to mean anything.</div>`;
   }
   html += "</div>";
 
   html += renderHostBox("live");
   return html;
+}
+
+function scrollToCurrentBlind() {
+  const row = document.querySelector("table.blinds tr.current");
+  const container = document.querySelector(".table-scroll");
+  if (row && container) {
+    container.scrollTop = row.offsetTop - container.clientHeight / 2 + row.clientHeight / 2;
+  }
 }
 
 function positionSeats() {
@@ -582,6 +716,24 @@ function tickClock() {
   }, 250);
 }
 
+function tickCountdown() {
+  if (countdownInterval) clearInterval(countdownInterval);
+  if (LIVE.phase !== "setup") return;
+  const target = new Date(CONFIG.dateISO).getTime();
+  if (isNaN(target) || target - Date.now() <= 0) return;
+  countdownInterval = setInterval(() => {
+    const grid = $("event-countdown");
+    if (!grid) { clearInterval(countdownInterval); return; }
+    const msLeft = target - Date.now();
+    if (msLeft <= 0) { render(); return; }
+    const p = msToParts(msLeft);
+    $("cd-d").textContent = pad2(p.d);
+    $("cd-h").textContent = pad2(p.h);
+    $("cd-m").textContent = pad2(p.m);
+    $("cd-s").textContent = pad2(p.s);
+  }, 1000);
+}
+
 function render() {
   if (!CONFIG || !LIVE) return;
   let html = renderHeader();
@@ -591,6 +743,8 @@ function render() {
   html += `<footer class="note">Final Table — built for ${esc(CONFIG.name)}. Everyone sees the same live board; host controls are PIN-locked.</footer>`;
   $("app").innerHTML = html;
   if (activeTab === "live") { positionSeats(); tickClock(); }
+  if (activeTab === "rules") scrollToCurrentBlind();
+  tickCountdown();
   wireEvents();
 }
 
@@ -598,7 +752,7 @@ function wireEvents() {
   document.querySelectorAll(".tab-btn").forEach((b) => b.addEventListener("click", () => { activeTab = b.dataset.tab; render(); }));
 
   const sf = $("signup-form");
-  if (sf) sf.addEventListener("submit", (ev) => { ev.preventDefault(); submitSignup(sf.name.value, sf.note.value); sf.reset(); });
+  if (sf) sf.addEventListener("submit", (ev) => { ev.preventDefault(); submitSignup(sf.name.value, sf.note.value, sf.message.value); sf.reset(); });
 
   const unlockBtn = $("unlock-btn");
   if (unlockBtn) unlockBtn.addEventListener("click", () => tryUnlock($("pin-input").value));
@@ -608,11 +762,12 @@ function wireEvents() {
   if (lockBtn) lockBtn.addEventListener("click", lockHost);
 
   document.querySelectorAll('[data-act="toggle-confirmed"]').forEach((el) => el.addEventListener("click", () => toggleConfirmed(el.dataset.id)));
-  document.querySelectorAll('[data-act="toggle-paid"]').forEach((el) => el.addEventListener("click", () => togglePaid(el.dataset.id)));
   document.querySelectorAll('[data-act="toggle-topoff"]').forEach((el) => el.addEventListener("click", () => toggleTopOff(el.dataset.id)));
   document.querySelectorAll('[data-act="rebuy-inc"]').forEach((el) => el.addEventListener("click", () => setRebuys(el.dataset.id, 1)));
   document.querySelectorAll('[data-act="rebuy-dec"]').forEach((el) => el.addEventListener("click", () => setRebuys(el.dataset.id, -1)));
   document.querySelectorAll('[data-act="remove"]').forEach((el) => el.addEventListener("click", () => removeSignup(el.dataset.id)));
+  document.querySelectorAll('[data-act="eliminate"]').forEach((el) => el.addEventListener("click", () => markEliminated(el.dataset.id)));
+  document.querySelectorAll('[data-act="restore"]').forEach((el) => el.addEventListener("click", () => restoreEliminated(el.dataset.id)));
 
   const settingsForm = $("settings-form");
   if (settingsForm) settingsForm.addEventListener("submit", (ev) => { ev.preventDefault(); saveEventSettings(settingsForm); });
@@ -625,10 +780,10 @@ function wireEvents() {
   const resumeBtn = $("resume-btn"); if (resumeBtn) resumeBtn.addEventListener("click", resumeClock);
   const nextBtn = $("next-btn"); if (nextBtn) nextBtn.addEventListener("click", nextLevel);
   const prevBtn = $("prev-btn"); if (prevBtn) prevBtn.addEventListener("click", prevLevel);
+  const restartBtn = $("restart-btn"); if (restartBtn) restartBtn.addEventListener("click", restartLevel);
   const resetBtn = $("reset-btn"); if (resetBtn) resetBtn.addEventListener("click", resetTournament);
   const reshuffleBtn = $("reshuffle-btn"); if (reshuffleBtn) reshuffleBtn.addEventListener("click", generateSeating);
-  const elimBtn = $("elim-btn"); if (elimBtn) elimBtn.addEventListener("click", () => markEliminated($("elim-select").value));
-  const undoBtn = $("undo-elim-btn"); if (undoBtn) undoBtn.addEventListener("click", undoElimination);
 }
 
+setInterval(checkAutoAdvance, 1000);
 startListeners();
