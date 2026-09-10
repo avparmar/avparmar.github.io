@@ -644,9 +644,14 @@ function renderRulesTab() {
 
   html += "</div>";
 
+  const topTier = PAYOUT_PCTS.slice(0, 2);
+  const restTier = PAYOUT_PCTS.slice(2);
   html += '<div><div class="card"><h2>Payouts</h2>' +
     `<div class="sub">Estimated on the current pool of ${fmtMoney(pot.projected)}</div>` +
-    `<div class="payout-row">${PAYOUT_PCTS.map((pct, i) => payoutCard(PAYOUT_PLACE_LABELS[i], pct, pot.projected, i === 0)).join("")}</div></div>`;
+    `<div class="payout-tiers">` +
+    `<div class="payout-row payout-row-top">${topTier.map((pct, i) => payoutCard(PAYOUT_PLACE_LABELS[i], pct, pot.projected, i === 0)).join("")}</div>` +
+    (restTier.length ? `<div class="payout-row payout-row-rest">${restTier.map((pct, i) => payoutCard(PAYOUT_PLACE_LABELS[i + 2], pct, pot.projected, false)).join("")}</div>` : "") +
+    `</div></div>`;
 
   html += `<div class="card"><h2>Blind schedule</h2><div class="sub">${BLIND_LEVELS.filter((l) => !l.brk).length} levels</div>
     <div class="table-scroll"><table class="blinds"><thead><tr><th>Level</th><th>Blinds</th><th>Length</th></tr></thead><tbody>`;

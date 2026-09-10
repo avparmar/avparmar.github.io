@@ -262,12 +262,23 @@ table.blinds tr.current td:last-child { border-right: 4px solid var(--felt); }
 .rules-list li { margin-bottom: 9px; }
 .rules-list li.warn-line { list-style: none; margin-left: -20px; font-weight: 700; margin-bottom: 12px; }
 
-.payout-row { display: flex; gap: 12px; margin-top: 10px; }
-.payout-card { flex: 1; border-radius: 10px; padding: 14px; background: var(--surface-2); text-align: center; }
+.payout-tiers { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.payout-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 12px; }
+.payout-card { flex: 1 1 90px; border-radius: 10px; padding: 12px 8px; background: var(--surface-2); text-align: center; }
 .payout-card.first { background: var(--gold-soft); border: 1px solid var(--gold); }
-.payout-card .place { font-family: var(--font-display); font-weight: 600; font-size: 19px; text-transform: uppercase; letter-spacing: 0.02em; }
-.payout-card .pct { font-size: 12px; color: var(--ink-dim); }
-.payout-card .amt { font-family: var(--font-mono); font-size: 20px; font-weight: 600; margin-top: 4px; }
+.payout-card .place { font-family: var(--font-display); font-weight: 600; font-size: clamp(14px, 4vw, 19px); text-transform: uppercase; letter-spacing: 0.02em; white-space: nowrap; }
+.payout-card .pct { font-size: clamp(10px, 2.6vw, 12px); color: var(--ink-dim); }
+.payout-card .amt { font-family: var(--font-mono); font-size: clamp(14px, 4vw, 20px); font-weight: 600; margin-top: 4px; white-space: nowrap; }
+
+.payout-row-top .payout-card { flex-basis: 108px; padding: 16px 8px; }
+.payout-row-top .payout-card .place { font-size: clamp(17px, 5vw, 23px); }
+.payout-row-top .payout-card .pct { font-size: clamp(11px, 3vw, 13px); }
+.payout-row-top .payout-card .amt { font-size: clamp(19px, 5.6vw, 27px); }
+
+.payout-row-rest .payout-card { flex-basis: 78px; padding: 9px 6px; }
+.payout-row-rest .payout-card .place { font-size: clamp(12px, 3.4vw, 16px); }
+.payout-row-rest .payout-card .pct { font-size: clamp(9px, 2.2vw, 11px); }
+.payout-row-rest .payout-card .amt { font-size: clamp(12.5px, 3.6vw, 17px); }
 
 .clock-card {
   background: linear-gradient(160deg, var(--felt-deep) 0%, var(--felt) 120%); color: var(--felt-ink);
