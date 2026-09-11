@@ -58,9 +58,9 @@ const PAYOUT_PCTS = [40, 25, 15, 11, 9];
 const PAYOUT_PLACE_LABELS = ["1st", "2nd", "3rd", "4th", "5th"];
 
 const DEFAULT_CONFIG = {
-  name: "Poker Tournament",
+  name: "1st Annual End-of-the-Green-Line-(not counting the extension) Grand Royale Survival Tournament",
   dateISO: "2026-09-19T15:00",
-  location: "TBD — add your address in Host Settings",
+  location: "22 Water St, Cambridge, MA, 02141",
   hostPhone: "7746706693",
   venmo: "@adi2015",
   buyIn: 50,
