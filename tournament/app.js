@@ -43,7 +43,7 @@ const BLIND_LEVELS = [
   { sb: 5000, bb: 10000 },
   { sb: 7000, bb: 14000 },
   { sb: 10000, bb: 20000 },
-  { brk: true, mins: 10, label: "Life Conptemplation Break" },
+  { brk: true, mins: 10, label: "Life Contemplation Break" },
   { sb: 12000, bb: 24000 },
   { sb: 15000, bb: 30000 },
   { sb: 20000, bb: 40000 },
@@ -69,7 +69,7 @@ const DEFAULT_CONFIG = {
   startingStack: 10000,
   rebuyStack: 10000,
   capacity: 18,
-  hostPin: "1919"
+  hostPin: "1919" // bro what are you trying to do 👀
 };
 const DEFAULT_LIVE = {
   phase: "setup", levelIndex: 0, levelEndsAt: null, remainingMs: null,
