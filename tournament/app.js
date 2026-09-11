@@ -624,7 +624,7 @@ function renderRulesTab() {
     <ul class="rules-list">
       <li>Everyone's seated and playing from Level 1 — no new entrants once cards are in the air.</li>
       <li>Starting stack: <strong>${fmtChips(e.startingStack)}</strong> in chips for the ${fmtMoney(e.buyIn)} buy-in.</li>
-      <li><strong>Unlimited rebuys</strong> (${fmtMoney(e.rebuyPrice)} each for a full ${fmtChips(e.rebuyStack)}-chip stack) through the end of Level ${cutoffNum}, while your count is at or below starting stack.</li>
+      <li><strong>Unlimited rebuys</strong> for ${fmtMoney(e.rebuyPrice)} each through the end of Level ${cutoffNum} (the first break) — available any time your stack drops below the ${fmtChips(e.startingStack)} starting stack, and each one brings you back up to a full ${fmtChips(e.rebuyStack)}-chip stack.</li>
       <li>One-time optional top-off (${fmtMoney(e.topOffPrice)}) at the first break — brings your stack up to, but not past, the ${fmtChips(e.startingStack)} starting stack.</li>
       <li>Top ${PAYOUT_PCTS.length} finishers are paid. See the payout split below.</li>
       <li>Buy-ins and rebuys are non-refundable.</li>
@@ -636,10 +636,11 @@ function renderRulesTab() {
     <li>Once eliminations bring the field to 9 or fewer, tables will be balanced down to one.</li>
   </ul></div>`;
 
-  html += `<div class="card"><h2>House rules</h2><ul class="rules-list">
-    <li class="warn-line">The 7-2 game is not on this time.</li>
+  html += `<div class="card"><h2>Rules</h2><ul class="rules-list">
+    <li>The 7-2 game is not on this time.</li>
     <li>Verbal declarations of a raise or call are binding; string bets (pushing chips in more than one motion without declaring) aren't allowed.</li>
     <li>An all-in player is live only for the pot(s) they covered — side pots form for the rest.</li>
+    <li>Anyone can call clock on a player taking a long time to act — once called, they get 1 minute to act or their hand is folded. This is a friendly game, so please don't abuse it.</li>
   </ul></div>`;
 
   html += "</div>";

@@ -260,7 +260,6 @@ table.blinds tr.current td:last-child { border-right: 4px solid var(--felt); }
 
 .rules-list { padding-left: 20px; margin: 0; }
 .rules-list li { margin-bottom: 9px; }
-.rules-list li.warn-line { list-style: none; margin-left: -20px; font-weight: 700; margin-bottom: 12px; }
 
 .payout-tiers { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
 .payout-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 12px; }
