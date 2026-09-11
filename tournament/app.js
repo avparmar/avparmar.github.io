@@ -69,7 +69,8 @@ const DEFAULT_CONFIG = {
   startingStack: 10000,
   rebuyStack: 10000,
   capacity: 18,
-  hostPin: "1919" // bro what are you trying to do 👀
+  hostPin: "1919", // bro what are you trying to do 👀
+  dealers: []
 };
 const DEFAULT_LIVE = {
   phase: "setup", levelIndex: 0, levelEndsAt: null, remainingMs: null,
@@ -206,7 +207,8 @@ async function saveEventSettings(form) {
     rebuyPrice: Math.max(0, Number(form.rebuyPrice.value) || 0),
     topOffPrice: Math.max(0, Number(form.topOffPrice.value) || 0),
     capacity: Math.max(2, Number(form.capacity.value) || 18),
-    hostPin: form.hostPin.value.trim() || CONFIG.hostPin
+    hostPin: form.hostPin.value.trim() || CONFIG.hostPin,
+    dealers: form.dealers.value.split("\n").map((s) => s.trim()).filter(Boolean)
   }, { merge: true });
 }
 
@@ -491,10 +493,21 @@ function tabBtn(id, label) {
   return `<button class="tab-btn${activeTab === id ? " active" : ""}" data-tab="${id}">${label}</button>`;
 }
 
+function renderDealersCard() {
+  const dealers = (CONFIG.dealers || []).filter(Boolean);
+  let html = `<div class="card" style="margin-bottom:18px;"><h2>Dealers${dealers.length ? ` (${dealers.length})` : ""}</h2>`;
+  html += dealers.length
+    ? `<table class="roster-table"><tbody>${dealers.map((d) => `<tr><td class="roster-name">${esc(d)}</td></tr>`).join("")}</tbody></table>`
+    : `<div class="empty-note">No dealers added yet — add them in Host Settings.</div>`;
+  html += "</div>";
+  return html;
+}
+
 function renderSignupTab() {
   const confirmed = confirmedList(), pending = pendingList();
   let html = '<div class="grid-2 signup-grid"><div class="roster-col">';
 
+  html += renderDealersCard();
   html += `<div class="card"><h2>Confirmed roster (${confirmed.length}/${CONFIG.capacity})</h2>`;
   html += confirmed.length ? renderRosterTable(confirmed, false) : `<div class="empty-note">No one confirmed yet.</div>`;
   if (pending.length) {
@@ -616,6 +629,7 @@ function renderEventSettingsForm() {
     <div class="field"><label>Top-off price ($)</label><input type="number" min="0" name="topOffPrice" value="${e.topOffPrice}"></div>
     <div class="field"><label>Capacity (seats)</label><input type="number" min="2" name="capacity" value="${e.capacity}"></div>
     <div class="field"><label>Host PIN</label><input name="hostPin" maxlength="12" value="${esc(e.hostPin)}"></div>
+    <div class="field"><label>Dealers (one per line)</label><textarea name="dealers" rows="3" placeholder="e.g. Sam&#10;Jordan">${esc((e.dealers || []).join("\n"))}</textarea></div>
     <button class="btn secondary" type="submit">Save settings</button>
   </form>`;
 }

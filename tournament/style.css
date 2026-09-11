@@ -46,7 +46,7 @@ h1, h2, h3 {
 .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 a { color: inherit; }
 button { font-family: var(--font-body); cursor: pointer; }
-input, select { font-family: var(--font-body); font-size: 15px; }
+input, select, textarea { font-family: var(--font-body); font-size: 15px; }
 
 #app { max-width: 980px; margin: 0 auto; padding: 20px 18px 64px; }
 .loading-note { color: var(--ink-dim); font-size: 14px; padding: 40px 0; text-align: center; }
@@ -174,7 +174,8 @@ input, select { font-family: var(--font-body); font-size: 15px; }
 
 .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
 .field label { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-dim); }
-.field input, .field select { padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+.field input, .field select, .field textarea { padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+.field textarea { resize: vertical; min-height: 64px; line-height: 1.4; }
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
