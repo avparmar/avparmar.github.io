@@ -31,19 +31,19 @@ const BLIND_LEVELS = [
   { sb: 200, bb: 400 },
   { sb: 300, bb: 600 },
   { brk: true, mins: 10, label: "Bathroom break — rebuy period ends" },
+  { sb: 400, bb: 800 },
   { sb: 500, bb: 1000 },
   { sb: 700, bb: 1400 },
   { sb: 1000, bb: 2000 },
   { sb: 1500, bb: 3000 },
-  { sb: 2000, bb: 4000 },
   { brk: true, mins: 30, label: "Dinner break" },
+  { sb: 2000, bb: 4000 },
   { sb: 3000, bb: 6000 },
   { sb: 4000, bb: 8000 },
   { sb: 5000, bb: 10000 },
-  { sb: 6000, bb: 12000 },
-  { sb: 8000, bb: 16000 },
+  { sb: 7000, bb: 14000 },
   { sb: 10000, bb: 20000 },
-  { brk: true, mins: 10, label: "Break" },
+  { brk: true, mins: 10, label: "Life Conptemplation Break" },
   { sb: 12000, bb: 24000 },
   { sb: 15000, bb: 30000 },
   { sb: 20000, bb: 40000 },
@@ -238,7 +238,7 @@ async function pauseClock() {
   await setDoc(liveRef, { remainingMs, levelEndsAt: null, phase: "paused" }, { merge: true });
 }
 async function resumeClock() {
-  if (LIVE.phase !== "paused") return;
+  if (LIVE.phase !== "paused" && LIVE.phase !== "seated") return;
   await startLevel(LIVE.levelIndex, LIVE.remainingMs || 0);
 }
 async function nextLevel() { await startLevel(Math.min(BLIND_LEVELS.length - 1, LIVE.levelIndex + 1), null); }
@@ -251,7 +251,13 @@ async function beginTournament() {
     eliminations: [], chipCounts, chipCountsAt: Date.now(), chipCountsLabel: "Tournament start"
   }, { merge: true });
   await generateSeating();
-  await startLevel(0, null);
+  // Seat everyone and load Level 1 without starting its clock, so the host
+  // can walk the room, double-check the seating chart, and start the clock
+  // whenever the table's actually ready.
+  const lv0 = BLIND_LEVELS[0];
+  await setDoc(liveRef, {
+    levelIndex: 0, phase: "seated", remainingMs: lv0.mins * 60000, levelEndsAt: null
+  }, { merge: true });
 }
 
 // Blinds advance on their own once the clock is running: when a level's
@@ -532,7 +538,7 @@ function renderPrizePoolCard() {
   const pot = potTotals();
   const cutoffNum = levelIndexToNumber(FIRST_BREAK_INDEX - 1);
   return `<div class="countdown-banner">
-    <div class="cb-eyebrow">Estimated prize pool</div>
+    <div class="cb-eyebrow">Minimum prize pool</div>
     <div class="cb-num">${fmtMoney(pot.projected)}</div>
     <div class="cb-sub">Buy-in ${fmtMoney(CONFIG.buyIn)} · rebuy ${fmtMoney(CONFIG.rebuyPrice)} (unlimited through Level ${cutoffNum}) · top-off ${fmtMoney(CONFIG.topOffPrice)} (one-time, at the first break)</div>
   </div>`;
@@ -683,13 +689,17 @@ function renderLiveTab() {
   let html = "";
 
   if (LIVE.phase === "setup") {
-    html += `<div class="banner info">The clock hasn't started. When everyone's seated and chipped up, hit "Begin tournament" below to shuffle seating and start Level 1 — blinds will advance on their own from there, and the clock will pause automatically at each scheduled break.</div>`;
+    html += `<div class="banner info">The clock hasn't started. When everyone's seated and chipped up, hit "Begin tournament" below to shuffle seating and load Level 1 — you'll get a chance to look everything over before the clock actually starts.</div>`;
+  }
+  if (LIVE.phase === "seated") {
+    html += `<div class="banner info">Seating's set and Level 1 is loaded, but the clock hasn't started. Check the seating chart below, get everyone settled, then hit "Start clock" when you're ready to go — blinds will advance on their own from there, and the clock will pause automatically at each scheduled break.</div>`;
   }
 
   const lv = BLIND_LEVELS[LIVE.levelIndex];
   const nextLv = BLIND_LEVELS[LIVE.levelIndex + 1];
-  html += `<div class="clock-card${LIVE.phase === "paused" ? " paused" : ""}" id="clock-card">
-    <div class="level-badge">${lv.brk ? "Break" : "Level " + levelIndexToNumber(LIVE.levelIndex)}${LIVE.phase === "paused" ? " · Paused" : ""}</div>
+  const clockFrozen = LIVE.phase === "paused" || LIVE.phase === "seated";
+  html += `<div class="clock-card${clockFrozen ? " paused" : ""}" id="clock-card">
+    <div class="level-badge">${lv.brk ? "Break" : "Level " + levelIndexToNumber(LIVE.levelIndex)}${LIVE.phase === "paused" ? " · Paused" : ""}${LIVE.phase === "seated" ? " · Not started" : ""}</div>
     <div class="countdown" id="countdown-num">--:--</div>
     <div class="blinds-now${lv.brk ? " brk-text" : ""}">${levelLabel(lv)}</div>
     ${!lv.brk ? '<div class="blinds-lbl">Blinds</div>' : ""}
@@ -700,6 +710,9 @@ function renderLiveTab() {
     html += '<div class="btn-row" style="margin-top:14px;">';
     if (LIVE.phase === "setup") {
       html += `<button class="btn gold" id="begin-btn">Begin tournament</button>`;
+    } else if (LIVE.phase === "seated") {
+      html += `<button class="btn gold" id="resume-btn">Start clock</button>
+        <button class="btn danger" id="reset-btn">Reset tournament</button>`;
     } else {
       if (LIVE.phase === "running") html += `<button class="btn secondary" id="pause-btn">Pause</button>`;
       if (LIVE.phase === "paused") html += `<button class="btn" id="resume-btn">Resume</button>`;
@@ -823,7 +836,7 @@ function tickClock() {
       el.textContent = (mm < 10 ? "0" : "") + mm + ":" + (ss < 10 ? "0" : "") + ss;
       const card = $("clock-card");
       if (msLeft === 0 && card) card.style.outline = "3px solid var(--red)";
-    } else if (LIVE.phase === "paused" && LIVE.remainingMs != null) {
+    } else if ((LIVE.phase === "paused" || LIVE.phase === "seated") && LIVE.remainingMs != null) {
       const mm = Math.floor(LIVE.remainingMs / 60000), ss = Math.floor((LIVE.remainingMs % 60000) / 1000);
       el.textContent = (mm < 10 ? "0" : "") + mm + ":" + (ss < 10 ? "0" : "") + ss;
     }
