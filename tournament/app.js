@@ -552,7 +552,7 @@ function renderPrizePoolCard() {
   const cutoffNum = levelIndexToNumber(FIRST_BREAK_INDEX - 1);
   return `<div class="countdown-banner">
     <div class="cb-eyebrow">Minimum prize pool</div>
-    <div class="cb-num">${fmtMoney(pot.projected - 100)}</div>
+    <div class="cb-num">${fmtMoney(pot.projected - 150)}</div>
     <div class="cb-sub">Buy-in ${fmtMoney(CONFIG.buyIn)} · rebuy ${fmtMoney(CONFIG.rebuyPrice)} (unlimited through Level ${cutoffNum}) · top-off ${fmtMoney(CONFIG.topOffPrice)} (one-time, at the first break)</div>
   </div>`;
 }
