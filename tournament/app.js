@@ -645,7 +645,7 @@ function renderRulesTab() {
       <li>Everyone's seated and playing from Level 1 — no new entrants once cards are in the air.</li>
       <li>Starting stack: <strong>${fmtChips(e.startingStack)}</strong> in chips for the ${fmtMoney(e.buyIn)} buy-in.</li>
       <li><strong>Unlimited rebuys</strong> for ${fmtMoney(e.rebuyPrice)} each through the end of Level ${cutoffNum} (the first break) — available any time your stack drops below the ${fmtChips(e.startingStack)} starting stack, and each one brings you back up to a full ${fmtChips(e.rebuyStack)}-chip stack.</li>
-      <li>One-time optional top-off (${fmtMoney(e.topOffPrice)}) at the first break — brings your stack up to, but not past, the ${fmtChips(e.startingStack)} starting stack.</li>
+      <li>One-time optional top-off (${fmtMoney(e.topOffPrice)}) at the first break — adds a flat ${fmtChips(e.startingStack)} chips to your stack, regardless of your current count.</li>
       <li>Top ${PAYOUT_PCTS.length} finishers are paid. See the payout split below.</li>
       <li>Buy-ins and rebuys are non-refundable.</li>
     </ul></div>`;
@@ -668,10 +668,10 @@ function renderRulesTab() {
   const topTier = PAYOUT_PCTS.slice(0, 2);
   const restTier = PAYOUT_PCTS.slice(2);
   html += '<div><div class="card"><h2>Payouts</h2>' +
-    `<div class="sub">Estimated on the current pool of ${fmtMoney(pot.projected)}</div>` +
+    `<div class="sub">Estimated on the current pool of ${fmtMoney(pot.projected - 150)}</div>` +
     `<div class="payout-tiers">` +
-    `<div class="payout-row payout-row-top">${topTier.map((pct, i) => payoutCard(PAYOUT_PLACE_LABELS[i], pct, pot.projected, i === 0)).join("")}</div>` +
-    (restTier.length ? `<div class="payout-row payout-row-rest">${restTier.map((pct, i) => payoutCard(PAYOUT_PLACE_LABELS[i + 2], pct, pot.projected, false)).join("")}</div>` : "") +
+    `<div class="payout-row payout-row-top">${topTier.map((pct, i) => payoutCard(PAYOUT_PLACE_LABELS[i], pct, pot.projected - 150, i === 0)).join("")}</div>` +
+    (restTier.length ? `<div class="payout-row payout-row-rest">${restTier.map((pct, i) => payoutCard(PAYOUT_PLACE_LABELS[i + 2], pct, pot.projected - 150, false)).join("")}</div>` : "") +
     `</div></div>`;
 
   html += `<div class="card"><h2>Blind schedule</h2><div class="sub">${BLIND_LEVELS.filter((l) => !l.brk).length} levels</div>
@@ -807,7 +807,7 @@ function renderLiveTab() {
       if (!p) return;
       const top = r.place <= PAYOUT_PCTS.length;
       const pct = top ? PAYOUT_PCTS[r.place - 1] : 0;
-      html += `<div class="standings-row${top ? " top" : ""}"><span class="place-num">${r.place}</span><span>${esc(p.name)}</span>${top ? `<span class="payout">${fmtMoney(pot.projected * pct / 100)} payout</span>` : ""}</div>`;
+      html += `<div class="standings-row${top ? " top" : ""}"><span class="place-num">${r.place}</span><span>${esc(p.name)}</span>${top ? `<span class="payout">${fmtMoney((pot.projected - 150) * pct / 100)} payout</span>` : ""}</div>`;
     });
     if (remaining > 1) html += `<div class="empty-note" style="margin-top:8px;">${remaining} players still in it.</div>`;
     else if (confirmed.length === 1) html += `<div class="empty-note" style="margin-top:8px;">Only one confirmed player — standings need at least two to mean anything.</div>`;
